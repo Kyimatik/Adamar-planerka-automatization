@@ -67,17 +67,6 @@ Adamarid = {
 
 
 
-# Создаем скопик
-scopes = [
-    "https://www.googleapis.com/auth/spreadsheets"
-]
-
-creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
-client = gspread.authorize(creds)
-# Айдишка самой таблицы 
-sheet_id = "1_okoGuJ1fWLQ4-8eR0RlXI2ks0EmrvZG8b51jScIr38"
-sheet = client.open_by_key(sheet_id) # обертка самой таблицы , все обращения делаются через нее , то есть к которой мы можем обращаться 
-
 
 
 
