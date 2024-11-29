@@ -15,8 +15,6 @@ from aiogram.types import ReplyKeyboardMarkup , InlineKeyboardMarkup , InlineKey
 import os
 import time
 from datetime import datetime
-# Работа с самой jsonкой 
-from workwithjson import read_json, write_json, update_user_data, clear_user_data
 
 # dotenv 
 from dotenv import load_dotenv
@@ -32,6 +30,10 @@ from states import PlanerkaStates
 # Google connected API's
 import gspread
 from google.oauth2.service_account import Credentials
+# Настройка крона , для отправки каждый день 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+import pytz
 
 
 
@@ -67,10 +69,21 @@ Adamarid = {
 
 
 
+# Создаем скопик
+scopes = [
+    "https://www.googleapis.com/auth/spreadsheets"
+]
+
+creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+client = gspread.authorize(creds)
+# Айдишка самой таблицы 
+sheet_id = ""
+sheet = client.open_by_key(sheet_id) # обертка самой таблицы , все обращения делаются через нее , то есть к которой мы можем обращаться 
 
 
 
 
+"""Отмена какого либо действия )"""
 # Отмена отправки планерки 
 @dp.message(F.text.contains("Отмена ❌"))
 async def getcanceled(message: Message,state: FSMContext):
@@ -78,6 +91,8 @@ async def getcanceled(message: Message,state: FSMContext):
     await state.clear()
     return 
 
+
+"""Обновление данных , то есть запись новой планерки !"""
 # Добавление в гугл-таблицы , улучшает читаемость самого кода 
 def update_google_sheet(sheet, user_name, data):
     try:
@@ -112,7 +127,7 @@ def update_google_sheet(sheet, user_name, data):
 
 
 
-
+""" Обычная кнопочка старт , приветствие людей"""
 # Кнопочка /start
 @dp.message(Command("start"))
 async def letsstart(message: Message):
@@ -122,7 +137,7 @@ async def letsstart(message: Message):
 
 
 
-
+""" Планерка , получение данных и отправка ее в базу Google-sheets через gspred/google ouath2"""
 # Команда /planerka 
 @dp.message(Command("planerka"))
 async def start_planerka(message: Message , state : FSMContext):
@@ -235,13 +250,14 @@ async def handle_confirm(message: Message, state: FSMContext):
 
 
 
-
+""" Блок РАССЫЛКИ для всех пользователей! 
+"""
 
 # Кнопочка для рассылки  
 @dp.message(Command("send"))
 async def sendtoallworkers(message: Message , state :FSMContext):
     await message.answer(f"""Привет <b>{message.from_user.first_name}</b> 
-Отправьте текст который вы хотите отправить!""",parse_mode="HTML")
+Отправьте текст который вы хотите отправить!""",parse_mode="HTML",reply_markup=buttons.cancel)
     await state.set_state(Send.allinfo)
 
 # Получение самого текста  
@@ -260,7 +276,7 @@ async def starttospread(message: Message, state: FSMContext):
     finally:
         await asyncio.sleep(0.33)   # Интервал между отправками
     
-    await message.answer(f"Количество отправленных рассылок : {j}") # Отправка лога о кол-ве отправленных рассылок 
+    await message.answer(f"Количество отправленных рассылок : {j}",reply_markup=ReplyKeyboardRemove()) # Отправка лога о кол-ве отправленных рассылок 
 
     # Если есть ошибки, уведомляем о них
     if failed_users:
@@ -274,7 +290,7 @@ async def starttospread(message: Message, state: FSMContext):
 @dp.message(Command("problem"))
 async def sendproblem(message: Message,state: FSMContext):
     await message.answer("""Я никому ничего не расскажу 🤐
-Что тебя беспокоит ? """)
+Что тебя беспокоит ? """,reply_markup=buttons.cancel)
     await state.set_state(Problem.problemtext) # ждем проблему от сотрудника
 # Получение текста 
 @dp.message(Problem.problemtext)
@@ -287,13 +303,13 @@ async def problemisonway(message: Message, state: FSMContext):
 """)
         await asyncio.sleep(0.33) # интервал между отправками
     print("Все отправилось !")
-
-
+    await message.answer("Ваша <b>проблема</b> была отправлена",parse_mode="HTML",reply_markup=ReplyKeyboardRemove()) # ХТМЛ и удаление кнопки 
+                                                                                                                
 # Анонимное отправление предложения
 @dp.message(Command("suggest"))
 async def sendsuggest(message: Message,state: FSMContext):
     await message.answer("""Я никому ничего не расскажу 🤐
-Что ты хочешь предложить ? """)
+Что ты хочешь предложить ? """,reply_markup=buttons.cancel)
     await state.set_state(Suggest.suggesttext) # ждем предложение от сотрудника
 # Получение текста 
 @dp.message(Suggest.suggesttext)
@@ -306,14 +322,70 @@ async def suggestonhisway(message: Message, state: FSMContext):
 """,parse_mode="HTML")
         await asyncio.sleep(0.33) # интервал между отправками
     print("Все отправилось !")
+    await message.answer("Ваше предложение было отправлено",parse_mode="HTML",reply_markup=ReplyKeyboardRemove()) # Удаление клавиатуры для suggest в конце 
 
+"""Айдишки стикеров"""
+stick = {
+    "morning" : "CAACAgIAAxkBAAIGxWdJly8nEK8Cf5hgGmG0C0Gnu_o2AAJ4CQACGELuCNy21buhwxUYNgQ",
+    "evening" : "CAACAgIAAxkBAAIGx2dJl3TBQ7Dwt1O7wfRVnhUsYI_wAAIhAAOtZbwUOqOdv9te40g2BA"
+}
 
-
-
-
-
-
+"""Отправление напоминалок нашим сотрудникам , каждый день"""
+async def send_morning_cron():
+    # Сам текст крона 
+    message_cron = """<b>Не забудь отправить твою планерку! 📋</b>
+И <i><b>улыбнись</b></i> пожалуйста ! )) 😁😉
+"""
+    allkyes = list(Adamarid.keys()) # все айдишки наших сотрудников , Adamar group 
+    j=0
+    failed_users = [] # список людей до которых не дошло сообщение
+    try:
+        for i in allkyes:
+            await bot.send_sticker(i,stick['morning']) # Отправка стикера
+            await bot.send_message(i,f"<b>{message_cron}</b>",parse_mode="HTML")
+            j+=1 # Увеличение количества 
+    except Exception as e:
+        failed_users.append(i,str(e)) # добавление людей до которых не дошло сообщение
+    finally:
+        await asyncio.sleep(0.33)   # Интервал между отправками
     
+    print(f"Количество отправленных рассылок : {j}") # Отправка лога о кол-ве отправленных рассылок 
+
+
+async def send_evening_cron():
+    # Сам текст крона 
+    message_cron = """<b>Не забудь отправить твою планерку! 📋</b>
+И <i><b>улыбнись</b></i> пожалуйста ! )) 😁😉
+"""
+    allkyes = list(Adamarid.keys()) # все айдишки наших сотрудников , Adamar group 
+    j=0
+    failed_users = [] # список людей до которых не дошло сообщение
+    try:
+        for i in allkyes:
+            await bot.send_sticker(i,stick['evening']) # Отправка стикера
+            await bot.send_message(i,f"<b>{message_cron}</b>",parse_mode="HTML")
+            j+=1 # Увеличение количества 
+    except Exception as e:
+        failed_users.append(i,str(e)) # добавление людей до которых не дошло сообщение
+    finally:
+        await asyncio.sleep(0.33)   # Интервал между отправками
+    
+    print(f"Количество отправленных рассылок : {j}") # Отправка лога о кол-ве отправленных рассылок 
+
+
+message_cron = """<b>Не забудь отправить твою планерку! 📋</b>
+И <i><b>улыбнись</b></i> пожалуйста ! )) 😁😉
+"""
+
+
+
+@dp.message(F.content_type.in_({'sticker'}))
+async def getid(message: Message):
+    await message.answer(message.sticker.file_id)
+
+
+
+
 
 
 
@@ -323,12 +395,26 @@ async def suggestonhisway(message: Message, state: FSMContext):
 
 
 async def main() -> None:
-    
     # Initialize Bot instance with a default parse mode which will be passed to all API calls
     
-    # And the run events dispatching of course bitch 
+    scheduler = AsyncIOScheduler(timezone=pytz.timezone("Asia/Bishkek"))
+    
+    # Добавляем задачу на 18:58 с понедельника по пятницу
+    trigger_1 = CronTrigger(hour=6, minute=30, day_of_week="0-4", timezone="Asia/Bishkek")
+    scheduler.add_job(send_morning_cron, trigger_1)
+    
+    # Добавляем задачу на 20:04 с понедельника по пятницу
+    trigger_2 = CronTrigger(hour=17, minute=0, day_of_week="0-4", timezone="Asia/Bishkek")
+    scheduler.add_job(send_evening_cron, trigger_2)
+    # Запускаем планировщик в фоновом режиме
+    scheduler.start()
+
+    # Запускаем бота
     await dp.start_polling(bot)
 
+
+    
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main()) 
+
