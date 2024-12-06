@@ -77,7 +77,7 @@ scopes = [
 creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
 client = gspread.authorize(creds)
 # Айдишка самой таблицы 
-sheet_id = "1Q0IKtagefSzvMHkvhPBkiL_gck9L18VMieG9c7BLIMI"
+sheet_id = ""
 sheet = client.open_by_key(sheet_id) # обертка самой таблицы , все обращения делаются через нее , то есть к которой мы можем обращаться 
 
 
