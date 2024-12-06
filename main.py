@@ -61,10 +61,10 @@ Adamarid = {
     "6366651156" : "Адель",
     "1015135651" : "Ибадат",
     "785058663" : "Мурат",
-    "475004396" : "Ажар",
     "6316190199" : "Суаида",
     "596067209" : "Богдан",
-    "852617668" : "Жумагуль"
+    "1584303142" : "Рома",
+    "777257179" : "Бекзат",
 }
 
 
@@ -77,7 +77,7 @@ scopes = [
 creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
 client = gspread.authorize(creds)
 # Айдишка самой таблицы 
-sheet_id = ""
+sheet_id = "1Q0IKtagefSzvMHkvhPBkiL_gck9L18VMieG9c7BLIMI"
 sheet = client.open_by_key(sheet_id) # обертка самой таблицы , все обращения делаются через нее , то есть к которой мы можем обращаться 
 
 
@@ -92,37 +92,72 @@ async def getcanceled(message: Message,state: FSMContext):
     return 
 
 
+
+
+
 """Обновление данных , то есть запись новой планерки !"""
 # Добавление в гугл-таблицы , улучшает читаемость самого кода 
-def update_google_sheet(sheet, user_name, data):
-    try:
-        # Проверяем существование листа
+def update_google_sheet(sheet, user_name, data, max_retries=5, retry_delay=150):
+    """
+    Обновление Google Sheet с повторными попытками при ошибках.
+
+    :param sheet: Объект Google Sheet.
+    :param user_name: Имя пользователя.
+    :param data: Данные для записи.
+    :param max_retries: Максимальное количество попыток.
+    :param retry_delay: Интервал между попытками в секундах.
+    """
+    for attempt in range(1, max_retries + 1):
         try:
-            worksheet = sheet.worksheet(user_name)
-        except gspread.exceptions.WorksheetNotFound:
-            # Если лист не найден, создаем новый
-            worksheet = sheet.add_worksheet(title=user_name, rows=100, cols=10)
-            headers = ['Дата', 'Время прихода', 'Срочные задачи', 'Важные задачи', 
-                       'Доп задачи', 'Итог', 'Проблемы', 'Комментарии']
-            worksheet.append_row(headers)
+            # Проверяем существование листа
+            try:
+                worksheet = sheet.worksheet(user_name)
+            except gspread.exceptions.WorksheetNotFound:
+                logging.warning(f"Google Sheets: Лист для пользователя {user_name} не найден, создаётся новый.")
+                # Если лист не найден, создаем новый
+                worksheet = sheet.add_worksheet(title=user_name, rows=100, cols=10)
+                headers = ['Дата', 'Время прихода', 'Срочные задачи', 'Важные задачи',
+                           'Доп задачи', 'Итог', 'Проблемы', 'Комментарии']
+                worksheet.append_row(headers)
 
-        # Добавляем новую строку с данными
-        datenow = datetime.now().strftime('%Y-%m-%d')
-        new_row = [
-            datenow, data['arrival_time'], data['urgent_tasks'],
-            data['important_tasks'], data['additional_tasks'], data['result'],
-            data['problems'], data['comments']
-        ]
-        worksheet.append_row(new_row)
+            # Проверяем, что данные заполнены
+            if not data:
+                logging.warning(f"Google Sheets: Пустые данные для записи для пользователя {user_name}.")
+                return
 
-        # Форматирование
-        worksheet.format('A1:H1', {"textFormat": {"bold": True}})
-        worksheet.format(f'A2:H{worksheet.row_count}', {"wrapStrategy": "WRAP"})
+            # Добавляем новую строку с данными
+            new_row = [
+                data.get('dateofplanerka', 'N/A'),
+                data.get('arrival_time', 'N/A'),
+                data.get('urgent_tasks', 'N/A'),
+                data.get('important_tasks', 'N/A'),
+                data.get('additional_tasks', 'N/A'),
+                data.get('result', 'N/A'),
+                data.get('problems', 'N/A'),
+                data.get('comments', 'N/A')
+            ]
+            worksheet.append_row(new_row)
 
-        
+            # Форматирование
+            worksheet.format('A1:H1', {"textFormat": {"bold": True}})
+            worksheet.format(f'A2:H{worksheet.row_count}', {"wrapStrategy": "WRAP"})
 
-    except Exception as e:
-        print(f"Ошибка при обновлении Google Sheets: {e}")
+            logging.info(f"Google Sheets: Данные успешно записаны для пользователя {user_name}.")
+            return  # Если успешно, выходим из функции
+
+        except gspread.exceptions.APIError as e:
+            logging.error(f"Попытка {attempt} не удалась. Ошибка API: {e}")
+            if attempt < max_retries:
+                logging.info(f"Повторная попытка через {retry_delay} секунд...")
+                time.sleep(retry_delay)
+            else:
+                logging.error(f"Превышено количество попыток записи в Google Sheets для пользователя {user_name}.")
+                raise e  # Выбрасываем исключение после всех неудачных попыток
+        except Exception as e:
+            logging.error(f"Непредвиденная ошибка на попытке {attempt}: {e}")
+            raise e  # Для других ошибок не делаем повторных попыток
+
+
 # ////////////////////////////////////////////////////////////
 
 
@@ -234,9 +269,8 @@ async def handle_confirm(message: Message, state: FSMContext):
         chatidof = -1002130834445
         # -1002130834445_4
         await message.answer(summary,parse_mode="HTML",reply_markup=ReplyKeyboardRemove())
-        await bot.send_message(chat_id=chatidof,text=summaryforteam,parse_mode="HTML",message_thread_id=4)
+        # await bot.send_message(chat_id=chatidof,text=summaryforteam,parse_mode="HTML",message_thread_id=4)
         update_google_sheet(sheet=sheet,user_name=user_name,data=data)
-        print(f"Данные успешно записаны для {user_name}")
         await state.clear()
     else:
         await message.answer("Вы начинаете заново , данные очистились",reply_markup=ReplyKeyboardRemove())
@@ -302,7 +336,7 @@ async def problemisonway(message: Message, state: FSMContext):
 {msg}
 """)
         await asyncio.sleep(0.33) # интервал между отправками
-    print("Все отправилось !")
+    logging.info("Все отправилось !")
     await message.answer("Ваша <b>проблема</b> была отправлена",parse_mode="HTML",reply_markup=ReplyKeyboardRemove()) # ХТМЛ и удаление кнопки 
                                                                                                                 
 # Анонимное отправление предложения
@@ -321,7 +355,7 @@ async def suggestonhisway(message: Message, state: FSMContext):
 {msg}
 """,parse_mode="HTML")
         await asyncio.sleep(0.33) # интервал между отправками
-    print("Все отправилось !")
+    logging.info("Все отправилось !")
     await message.answer("Ваше предложение было отправлено",parse_mode="HTML",reply_markup=ReplyKeyboardRemove()) # Удаление клавиатуры для suggest в конце 
 
 """Айдишки стикеров"""
@@ -345,12 +379,13 @@ async def send_morning_cron():
             await bot.send_message(i,f"<b>{message_cron}</b>",parse_mode="HTML")
             j+=1 # Увеличение количества 
     except Exception as e:
-        failed_users.append(i,str(e)) # добавление людей до которых не дошло сообщение
+        failed_users.append(str(e)) # добавление людей до которых не дошло сообщение
     finally:
         await asyncio.sleep(0.33)   # Интервал между отправками
     
-    print(f"Количество отправленных рассылок : {j}") # Отправка лога о кол-ве отправленных рассылок 
-
+    logging.info(f"Количество отправленных рассылок : {j}") # Отправка лога о кол-ве отправленных рассылок 
+    logging.info(f"{failed_users}") # Кол-во , пользователей которые не получили стикер.
+    logging.info(f"{j}") # Кол-во отправленных рассылок , то есть стикеров
 
 async def send_evening_cron():
     # Сам текст крона 
@@ -366,22 +401,26 @@ async def send_evening_cron():
             await bot.send_message(i,f"<b>{message_cron}</b>",parse_mode="HTML")
             j+=1 # Увеличение количества 
     except Exception as e:
-        failed_users.append(i,str(e)) # добавление людей до которых не дошло сообщение
+        failed_users.append(str(e)) # добавление людей до которых не дошло сообщение
     finally:
         await asyncio.sleep(0.33)   # Интервал между отправками
     
-    print(f"Количество отправленных рассылок : {j}") # Отправка лога о кол-ве отправленных рассылок 
-
+    logging.info(f"Количество отправленных рассылок : {j}") # Отправка лога о кол-ве отправленных рассылок 
+    logging.info(f"{failed_users}") # Кол-во , пользователей которые не получили стикер.
+    logging.info(f"{j}") # Кол-во отправленных рассылок , то есть стикеров
+    
 
 message_cron = """<b>Не забудь отправить твою планерку! 📋</b>
 И <i><b>улыбнись</b></i> пожалуйста ! )) 😁😉
 """
 
 
-
-@dp.message(F.content_type.in_({'sticker'}))
-async def getid(message: Message):
-    await message.answer(message.sticker.file_id)
+# @dp.message(F.text)
+# async def getidofuser(message: Message):
+#     msg = message.text
+#     await bot.send_message(7095194058,f"""user-id - <code>{message.from_user.id}</code>\n
+# user-name - {message.from_user.username}\n
+# self text - <code>{msg}</code>""",parse_mode="HTML")
 
 
 
@@ -415,6 +454,10 @@ async def main() -> None:
 
     
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    logging.basicConfig(
+    level=logging.INFO,  # Уровень логов (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    format='%(asctime)s - %(levelname)s - %(message)s',  # Формат вывода
+    filename='app.log',  # Имя файла для логов
+    filemode='a'  # 'a' - добавлять новые логи в файл, 'w' - перезаписывать файл каждый раз
+)
     asyncio.run(main()) 
-
