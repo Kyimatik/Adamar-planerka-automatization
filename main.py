@@ -18,27 +18,37 @@ from datetime import datetime
 
 # dotenv 
 from dotenv import load_dotenv
-import os
 # files import 
+
 from states import Suggest
 from states import Problem
 from states import Send
 from states import QUESTIONS
 import buttons
-from states import PlanerkaStates
+from states import Date, Time, Tasks, Result, Problems, Comments
 
+# Work with json 
+
+from workjson import create_json_file, read_json_file, save_json_file, update_user_info, get_user_data, clear_user_data
+from workjson import file_path
 # Google connected API's
+
 import gspread
 from google.oauth2.service_account import Credentials
 # Настройка крона , для отправки каждый день 
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
 
 
 
+
+
 load_dotenv("day.env")  # Загружает переменные из файла .env
 token = os.getenv("TOKEN")# получение токена из .env файлика Токен бота 
+# token = os.getenv("testtok")# получение токена из .env файлика Токен бота 
+
 group = os.getenv("group")# получение токена из .env файлкика Токен группы
 
 
@@ -61,11 +71,20 @@ Adamarid = {
     "6366651156" : "Адель",
     "1015135651" : "Ибадат",
     "785058663" : "Мурат",
-    "6316190199" : "Суаида",
     "596067209" : "Богдан",
-    "1584303142" : "Рома",
+    "1584303142" : "Рамис",
     "777257179" : "Бекзат",
+    "1294402272" : "Малика",
+    "698809367" : "Азирет",
+    "389919701" : "Элина"
 }
+
+
+data = read_json_file(file_path=file_path)
+if not data:
+    logging.warning("Json файла не существует , создаем новый")
+    create_json_file(file_path=file_path, user_data=Adamarid)
+
 
 
 
@@ -77,7 +96,8 @@ scopes = [
 creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
 client = gspread.authorize(creds)
 # Айдишка самой таблицы 
-sheet_id = ""
+# sheet_id = "1Q0IKtagefSzvMHkvhPBkiL_gck9L18VMieG9c7BLIMI" # Adamar АЙДАЙ
+sheet_id = "1eetUrLBU9W0lHbvEBGOjhhxKX_5tE-0jKBMHVWlZ5BI" # Adamar 2025
 sheet = client.open_by_key(sheet_id) # обертка самой таблицы , все обращения делаются через нее , то есть к которой мы можем обращаться 
 
 
@@ -95,15 +115,14 @@ async def getcanceled(message: Message,state: FSMContext):
 
 
 
-"""Обновление данных , то есть запись новой планерки !"""
-# Добавление в гугл-таблицы , улучшает читаемость самого кода 
-def update_google_sheet(sheet, user_name, data, max_retries=5, retry_delay=150):
+
+def update_or_create_google_sheet(sheet, user_name, data, max_retries=5, retry_delay=150):
     """
-    Обновление Google Sheet с повторными попытками при ошибках.
+    Обновление или создание данных для планерки в Google Sheets.
 
     :param sheet: Объект Google Sheet.
     :param user_name: Имя пользователя.
-    :param data: Данные для записи.
+    :param data: Данные для записи/обновления.
     :param max_retries: Максимальное количество попыток.
     :param retry_delay: Интервал между попытками в секундах.
     """
@@ -114,10 +133,8 @@ def update_google_sheet(sheet, user_name, data, max_retries=5, retry_delay=150):
                 worksheet = sheet.worksheet(user_name)
             except gspread.exceptions.WorksheetNotFound:
                 logging.warning(f"Google Sheets: Лист для пользователя {user_name} не найден, создаётся новый.")
-                # Если лист не найден, создаем новый
-                worksheet = sheet.add_worksheet(title=user_name, rows=100, cols=10)
-                headers = ['Дата', 'Время прихода', 'Срочные задачи', 'Важные задачи',
-                           'Доп задачи', 'Итог', 'Проблемы', 'Комментарии']
+                worksheet = sheet.add_worksheet(title=user_name, rows=100, cols=6)
+                headers = ['Дата', 'Время прихода', 'Задачи', 'Итоги', 'Проблемы', 'Комментарии']
                 worksheet.append_row(headers)
 
             # Проверяем, что данные заполнены
@@ -125,25 +142,42 @@ def update_google_sheet(sheet, user_name, data, max_retries=5, retry_delay=150):
                 logging.warning(f"Google Sheets: Пустые данные для записи для пользователя {user_name}.")
                 return
 
-            # Добавляем новую строку с данными
-            new_row = [
-                data.get('dateofplanerka', 'N/A'),
-                data.get('arrival_time', 'N/A'),
-                data.get('urgent_tasks', 'N/A'),
-                data.get('important_tasks', 'N/A'),
-                data.get('additional_tasks', 'N/A'),
-                data.get('result', 'N/A'),
-                data.get('problems', 'N/A'),
-                data.get('comments', 'N/A')
-            ]
-            worksheet.append_row(new_row)
+            # Проверяем, существует ли уже запись с такой датой
+            records = worksheet.get_all_records()
+            updated = False
+            for row_idx, record in enumerate(records, start=2):  # Начинаем с 2, так как 1-я строка — это заголовки
+                if record.get('Дата') == data.get('date'):
+                    # Если дата совпала, обновляем все данные
+                    new_data = [
+                        data.get('date', 'N/A'),
+                        data.get('arrival_time', 'N/A'),
+                        data.get('tasks', 'N/A'),
+                        data.get('result', 'N/A'),
+                        data.get('problems', 'N/A'),
+                        data.get('comments', 'N/A')
+                    ]
+                    worksheet.update(f"A{row_idx}:F{row_idx}", [new_data])  # Обновляем все данные строки
+                    updated = True
+                    break
 
-            # Форматирование
-            worksheet.format('A1:H1', {"textFormat": {"bold": True}})
-            worksheet.format(f'A2:H{worksheet.row_count}', {"wrapStrategy": "WRAP"})
+            # Если записи не было, добавляем новую строку
+            if not updated:
+                new_row = [
+                    data.get('date', 'N/A'),
+                    data.get('arrival_time', 'N/A'),
+                    data.get('tasks', 'N/A'),
+                    data.get('result', 'N/A'),
+                    data.get('problems', 'N/A'),
+                    data.get('comments', 'N/A')
+                ]
+                worksheet.append_row(new_row)
+
+            # Форматирование заголовков
+            worksheet.format('A1:F1', {"textFormat": {"bold": True}})
+            worksheet.format(f'A2:F{worksheet.row_count}', {"wrapStrategy": "WRAP"})
 
             logging.info(f"Google Sheets: Данные успешно записаны для пользователя {user_name}.")
-            return  # Если успешно, выходим из функции
+            return 
 
         except gspread.exceptions.APIError as e:
             logging.error(f"Попытка {attempt} не удалась. Ошибка API: {e}")
@@ -158,6 +192,8 @@ def update_google_sheet(sheet, user_name, data, max_retries=5, retry_delay=150):
             raise e  # Для других ошибок не делаем повторных попыток
 
 
+
+
 # ////////////////////////////////////////////////////////////
 
 
@@ -166,119 +202,7 @@ def update_google_sheet(sheet, user_name, data, max_retries=5, retry_delay=150):
 # Кнопочка /start
 @dp.message(Command("start"))
 async def letsstart(message: Message):
-    await message.answer(f"Привет <b>{message.from_user.first_name}</b>, я бот ADAMAR Планерка",parse_mode="HTML")
-
-
-
-
-
-""" Планерка , получение данных и отправка ее в базу Google-sheets через gspred/google ouath2"""
-# Команда /planerka 
-@dp.message(Command("planerka"))
-async def start_planerka(message: Message , state : FSMContext):
-    usid = message.from_user.id
-    if str(usid) not in Adamarid:
-        await message.answer("Доступ запрещен")
-        return
-    else:
-        await message.answer(QUESTIONS["dateofplanerka"],reply_markup=buttons.cancel)
-        await state.set_state(PlanerkaStates.dateofplanerka)
-
-# Обработчик состояний
-# Время прихода 
-@dp.message(PlanerkaStates.dateofplanerka)
-async def handle_dateofplanerka(message: Message, state: FSMContext):
-    await state.update_data(dateofplanerka=message.text)
-    await state.set_state(PlanerkaStates.arrival_time)
-    await message.answer(QUESTIONS["arrival_time"])
-# Время прихода
-@dp.message(PlanerkaStates.arrival_time)
-async def handle_arrival_time(message: Message, state: FSMContext):
-    await state.update_data(arrival_time=message.text)
-    await state.set_state(PlanerkaStates.urgent_tasks)
-    await message.answer(QUESTIONS["urgent_tasks"])
-
- # Срочные задачи 
-@dp.message(PlanerkaStates.urgent_tasks)
-async def handle_urgent_tasks(message: Message, state: FSMContext):
-    await state.update_data(urgent_tasks=message.text)
-    await state.set_state(PlanerkaStates.important_tasks)
-    await message.answer(QUESTIONS["important_tasks"])
-# Важные задачи 
-@dp.message(PlanerkaStates.important_tasks)
-async def handle_important_tasks(message: Message, state: FSMContext):
-    await state.update_data(important_tasks=message.text)
-    await state.set_state(PlanerkaStates.additional_tasks)
-    await message.answer(QUESTIONS["additional_tasks"])
-    
- # Дополнительные задачи 
-@dp.message(PlanerkaStates.additional_tasks)
-async def handle_additional_tasks(message: Message, state: FSMContext):
-    await state.update_data(additional_tasks=message.text)
-    await state.set_state(PlanerkaStates.result)
-    await message.answer(QUESTIONS["result"])
- # Итог
-@dp.message(PlanerkaStates.result)
-async def handle_problems(message: Message, state: FSMContext):
-    await state.update_data(result=message.text)
-    await state.set_state(PlanerkaStates.problems)
-    await message.answer(QUESTIONS["problems"])
-
-# Проблемы 
-@dp.message(PlanerkaStates.problems)
-async def handle_problems(message: Message, state: FSMContext):
-    await state.update_data(problems=message.text)
-    await state.set_state(PlanerkaStates.comments)
-    await message.answer(QUESTIONS["comments"]) 
-
-@dp.message(PlanerkaStates.comments)
-async def handle_comments(message: Message, state: FSMContext):
-    await state.update_data(comments=message.text)
-    await state.set_state(PlanerkaStates.confirm)
-    await message.answer(QUESTIONS["confirm"],reply_markup=buttons.quskb)
-
-@dp.message(PlanerkaStates.confirm)
-async def handle_confirm(message: Message, state: FSMContext):
-    if message.text == "Да":
-        data = await state.get_data()
-        usid = message.from_user.id
-        user_name  = Adamarid[f"{usid}"]
-        datenow = datetime.now().strftime('%Y-%m-%d')
-        summary = (
-            f"📋 <b>Ваша планерка:</b>\n\n"
-            f"📅 Дата планерки: {data.get('dateofplanerka', 'не указано')}\n\n"
-            f"⏰ Время прихода: {data['arrival_time']}\n\n"
-            f"🔴 Срочные задачи: {data['urgent_tasks']}\n\n"
-            f"🟠 Важные задачи: {data['important_tasks']}\n\n"
-            f"🟢 Дополнительные задачи: {data['additional_tasks']}\n\n"
-            f"🚀 Итог : {data["result"]}\n\n"
-            f"⚠️ Проблемы: {data['problems']}\n\n"
-            f"💬 Комментарии: {data['comments']}"
-        )
-        summaryforteam = (
-            f"📋 <b>{user_name}</b>\n\n"
-            f"📅 Дата планерки: {data.get('dateofplanerka', 'не указано')}\n\n"
-            f"⏰ Время прихода: {data['arrival_time']}\n\n"
-            f"🔴 Срочные задачи: {data['urgent_tasks']}\n\n"
-            f"🟠 Важные задачи: {data['important_tasks']}\n\n"
-            f"🟢 Дополнительные задачи: {data['additional_tasks']}\n\n"
-            f"🚀 Итог : {data["result"]}\n\n"
-            f"⚠️ Проблемы: {data['problems']}\n\n"
-            f"💬 Комментарии: {data['comments']}"
-        )
-        chatidof = -1002130834445
-        # -1002130834445_4
-        await message.answer(summary,parse_mode="HTML",reply_markup=ReplyKeyboardRemove())
-        # await bot.send_message(chat_id=chatidof,text=summaryforteam,parse_mode="HTML",message_thread_id=4)
-        update_google_sheet(sheet=sheet,user_name=user_name,data=data)
-        await state.clear()
-    else:
-        await message.answer("Вы начинаете заново , данные очистились",reply_markup=ReplyKeyboardRemove())
-        await state.clear()
-        return 
-
-
-
+    await message.answer(f"Привет <b>{message.from_user.first_name}</b>, я бот ADAMAR Планерка",parse_mode="HTML",reply_markup=buttons.mainkb)
 
 
 
@@ -290,10 +214,14 @@ async def handle_confirm(message: Message, state: FSMContext):
 # Кнопочка для рассылки  
 @dp.message(Command("send"))
 async def sendtoallworkers(message: Message , state :FSMContext):
-    await message.answer(f"""Привет <b>{message.from_user.first_name}</b> 
-Отправьте текст который вы хотите отправить!""",parse_mode="HTML",reply_markup=buttons.cancel)
-    await state.set_state(Send.allinfo)
-
+    admins = [498128668,7095194058,7388391479]
+    if message.from_user.id in admins:
+        await message.answer(f"""Привет <b>{message.from_user.first_name}</b> 
+    Отправьте текст который вы хотите отправить!""",parse_mode="HTML",reply_markup=buttons.cancel)
+        await state.set_state(Send.allinfo)
+    else:
+        await message.answer("Доступ запрещен")
+        return
 # Получение самого текста  
 @dp.message(Send.allinfo)
 async def starttospread(message: Message, state: FSMContext):
@@ -360,67 +288,265 @@ async def suggestonhisway(message: Message, state: FSMContext):
 
 """Айдишки стикеров"""
 stick = {
-    "morning" : "CAACAgIAAxkBAAIGxWdJly8nEK8Cf5hgGmG0C0Gnu_o2AAJ4CQACGELuCNy21buhwxUYNgQ",
-    "evening" : "CAACAgIAAxkBAAIGx2dJl3TBQ7Dwt1O7wfRVnhUsYI_wAAIhAAOtZbwUOqOdv9te40g2BA"
+    "morning" : "CAACAgIAAxkBAAISYGdf-KBDq5QYDfcnSiv57WNbLZ7YAAKrEwACY42hSbyVV7zak9ODNgQ",
+    "evening" : "CAACAgIAAxkBAAISXGdf-GUof7upMwTkrLmWjFIQVKtHAAINEQACiDrRSMMk8ZZ6ZMfcNgQ"
 }
 
 """Отправление напоминалок нашим сотрудникам , каждый день"""
 async def send_morning_cron():
-    # Сам текст крона 
-    message_cron = """<b>Не забудь отправить твою планерку! 📋</b>
-И <i><b>улыбнись</b></i> пожалуйста ! )) 😁😉
-"""
-    allkyes = list(Adamarid.keys()) # все айдишки наших сотрудников , Adamar group 
-    j=0
-    failed_users = [] # список людей до которых не дошло сообщение
-    try:
-        for i in allkyes:
-            await bot.send_sticker(i,stick['morning']) # Отправка стикера
-            await bot.send_message(i,f"<b>{message_cron}</b>",parse_mode="HTML")
-            j+=1 # Увеличение количества 
-    except Exception as e:
-        failed_users.append(str(e)) # добавление людей до которых не дошло сообщение
-    finally:
-        await asyncio.sleep(0.33)   # Интервал между отправками
-    
-    logging.info(f"Количество отправленных рассылок : {j}") # Отправка лога о кол-ве отправленных рассылок 
-    logging.info(f"{failed_users}") # Кол-во , пользователей которые не получили стикер.
-    logging.info(f"{j}") # Кол-во отправленных рассылок , то есть стикеров
+    allkyes = [int(key) for key in Adamarid.keys()]  # Преобразование ключей в int
+    j = 0
+    failed_users = []
+
+    for i in allkyes:
+        try:
+            name = Adamarid.get(str(i), "друг")  # Получение имени
+            try:
+                await bot.send_sticker(i, stick['morning'])
+            except Exception as e:
+                failed_users.append(f"Ошибка при отправке стикера ID {i}: {e}")
+                continue
+
+            try:
+                await bot.send_message(
+                    i,
+                    f"""<b> Доброе утро, <i>{name}</i> 🌞  
+Не забудь заполнить утреннюю планерку! 📋  
+Начни день с улыбки и вдохновения! 😊✨  
+Дедлайн — 11:00. Успеешь? 😉</b>""",
+                    parse_mode="HTML"
+                )
+                j += 1
+                await asyncio.sleep(1)  # Увеличенный интервал
+            except Exception as e:
+                failed_users.append(f"Ошибка при отправке сообщения ID {i}: {e}")
+        except Exception as e:
+            logging.error(f"Неизвестная ошибка для ID {i}: {e}")
+
+    logging.info(f"Количество отправленных рассылок: {j}")
+    if failed_users:
+        logging.warning(f"Не удалось отправить сообщения: {failed_users}")
+
+
+
+
 
 async def send_evening_cron():
-    # Сам текст крона 
-    message_cron = """<b>Не забудь отправить твою планерку! 📋</b>
-И <i><b>улыбнись</b></i> пожалуйста ! )) 😁😉
-"""
-    allkyes = list(Adamarid.keys()) # все айдишки наших сотрудников , Adamar group 
-    j=0
-    failed_users = [] # список людей до которых не дошло сообщение
-    try:
-        for i in allkyes:
-            await bot.send_sticker(i,stick['evening']) # Отправка стикера
-            await bot.send_message(i,f"<b>{message_cron}</b>",parse_mode="HTML")
-            j+=1 # Увеличение количества 
-    except Exception as e:
-        failed_users.append(str(e)) # добавление людей до которых не дошло сообщение
-    finally:
-        await asyncio.sleep(0.33)   # Интервал между отправками
-    
-    logging.info(f"Количество отправленных рассылок : {j}") # Отправка лога о кол-ве отправленных рассылок 
-    logging.info(f"{failed_users}") # Кол-во , пользователей которые не получили стикер.
-    logging.info(f"{j}") # Кол-во отправленных рассылок , то есть стикеров
-    
+    allkyes = [int(key) for key in Adamarid.keys()]  # Преобразование ключей в int
+    j = 0
+    failed_users = []
+
+    for i in allkyes:  # Цикл по ключам словаря
+        try:
+            name = Adamarid.get(str(i), "друг")  # Получение имени сотрудника
+            
+            # Отправка стикера
+            try:
+                await bot.send_sticker(i, stick['evening'])
+            except Exception as e:
+                failed_users.append(f"Ошибка при отправке стикера ID {i}: {e}")
+                continue  # Пропуск текущей итерации
+            
+            # Отправка сообщения
+            try:
+                await bot.send_message(
+                    i,
+                    f"""<b>Добрый вечер, <i><b>{name}!</b></i> 🌙  
+Закончим этот день вместе? Не забудь заполнить вечернюю планерку! 📋  
+Расскажи, как всё прошло, и получи от нас респект! 😎👍  
+Дедлайн — 20:00. Не откладывай! 😉</b>""",
+                    parse_mode="HTML"
+                )
+                j += 1
+                await asyncio.sleep(1)  # Увеличенный интервал между отправками
+            except Exception as e:
+                failed_users.append(f"Ошибка при отправке сообщения ID {i}: {e}")
+        except Exception as e:
+            logging.error(f"Неизвестная ошибка для ID {i}: {e}")
+
+    # Логирование результатов
+    logging.info(f"Количество отправленных вечерних рассылок: {j}")
+    if failed_users:
+        logging.warning(f"Не удалось отправить сообщения: {failed_users}")
+
 
 message_cron = """<b>Не забудь отправить твою планерку! 📋</b>
 И <i><b>улыбнись</b></i> пожалуйста ! )) 😁😉
 """
 
-
+# """Получение id , нового или уже имеющегося сотрудника"""
 # @dp.message(F.text)
 # async def getidofuser(message: Message):
 #     msg = message.text
 #     await bot.send_message(7095194058,f"""user-id - <code>{message.from_user.id}</code>\n
 # user-name - {message.from_user.username}\n
 # self text - <code>{msg}</code>""",parse_mode="HTML")
+
+        
+
+"""Получение id , определенного стикера"""
+# @dp.message(F.content_type.in_({'sticker'}))
+# async def getid(message: Message):
+#     await message.answer(message.sticker.file_id)
+
+# Обработка Даты 
+@dp.message(F.text.contains("Дата 📅"))
+async def editdate(message: Message,state : FSMContext):
+    await message.answer(f"{QUESTIONS["dateofplanerka"]}")
+    await state.set_state(Date.date)
+# Обработка Даты
+@dp.message(Date.date)
+async def getdataofdate(message: Message,state: FSMContext):
+    data = read_json_file(file_path=file_path)
+    msg = message.text
+    user_id = message.from_user.id
+    update_user_info(str(user_id) , "date" , new_value=f"{msg}")
+    await state.clear()
+    summary = get_user_data(user_id , file_path)
+    await bot.send_message(user_id, summary,parse_mode="HTML")
+    
+# Обработка Времени прихода
+@dp.message(F.text.contains("Время прихода 🕰"))
+async def edittime(message: Message,state : FSMContext):
+    await message.answer(f"{QUESTIONS["arrival_time"]}")
+    await state.set_state(Time.time)
+# Обработка Времени прихода
+@dp.message(Time.time)
+async def getdataoftime(message: Message,state: FSMContext):
+    data = read_json_file(file_path=file_path)
+    msg = message.text
+    user_id = message.from_user.id
+    update_user_info(str(user_id) , "arrival_time" , new_value=f"{msg}")
+    await state.clear()
+    summary = get_user_data(user_id , file_path)
+    await bot.send_message(user_id, summary,parse_mode="HTML")
+
+# Обработка Задачи
+@dp.message(F.text.contains("Задачи 📝"))
+async def edittasks(message: Message,state : FSMContext):
+    await message.answer(f"{QUESTIONS["alltasks"]}")
+    await state.set_state(Tasks.tasks)
+# Обработка Задачи
+@dp.message(Tasks.tasks)
+async def getdataoftasks(message: Message,state: FSMContext):
+    data = read_json_file(file_path=file_path)
+    msg = message.text
+    user_id = message.from_user.id
+    update_user_info(str(user_id) , "tasks" , new_value=f"{msg}")
+    await state.clear()
+    summary = get_user_data(user_id , file_path)
+    await bot.send_message(user_id, summary,parse_mode="HTML")
+
+
+# Обработка Итоги
+@dp.message(F.text.contains("Итоги 🎯"))
+async def editresult(message: Message,state : FSMContext):
+    await message.answer(f"{QUESTIONS["result"]}")
+    await state.set_state(Result.result)
+# Обработка Итоги
+@dp.message(Result.result)
+async def getdataofresults(message: Message,state: FSMContext):
+    data = read_json_file(file_path=file_path)
+    msg = message.text
+    user_id = message.from_user.id
+    update_user_info(str(user_id) , "result" , new_value=f"{msg}")
+    await state.clear()
+    summary = get_user_data(user_id , file_path)
+    await bot.send_message(user_id, summary,parse_mode="HTML")
+
+
+# Обработка Проблемы
+@dp.message(F.text.contains("Проблемы 👹"))
+async def editproblem(message: Message,state : FSMContext):
+    await message.answer(f"{QUESTIONS["problems"]}")
+    await state.set_state(Problems.problem)
+# Обработка Проблемы
+@dp.message(Problems.problem)
+async def getdataofproblems(message: Message,state: FSMContext):
+    data = read_json_file(file_path=file_path)
+    msg = message.text
+    user_id = message.from_user.id
+    update_user_info(str(user_id) , "problems" , new_value=f"{msg}")
+    await state.clear()
+    summary = get_user_data(user_id , file_path)
+    await bot.send_message(user_id, summary,parse_mode="HTML")
+
+
+# Обработка Проблемы
+@dp.message(F.text.contains("Комментарии 🗣"))
+async def editcomments(message: Message,state : FSMContext):
+    await message.answer(f"{QUESTIONS["comments"]}")
+    await state.set_state(Comments.comment)
+# Обработка Проблемы
+@dp.message(Comments.comment)
+async def getdataofcomments(message: Message,state: FSMContext):
+    data = read_json_file(file_path=file_path)
+    msg = message.text
+    user_id = message.from_user.id
+    update_user_info(str(user_id) , "comments" , new_value=f"{msg}")
+    await state.clear()
+    summary = get_user_data(user_id , file_path)
+    await bot.send_message(user_id, summary,parse_mode="HTML")
+
+
+# Очистка самой планерки
+@dp.message(F.text.contains("Очистить планерку 🧹"))
+async def cleardataofworker(message: Message,state : FSMContext):
+    user_id = message.from_user.id
+    clear_user_data(str(user_id) , file_path=file_path)
+    await message.answer("Данные очистились!")
+
+
+# Показ самой планерки 
+@dp.message(F.text.contains("Моя планерка 🧾"))
+async def showhisplanerka(message: Message,state : FSMContext):
+    user_id = message.from_user.id
+    summary = get_user_data(user_id , file_path)
+    await bot.send_message(user_id, summary,parse_mode="HTML")
+
+
+# Отправка самой планерки  
+@dp.message(F.text.contains("Отправить 📤"))
+async def sendyourplanerka(message: Message,state : FSMContext):
+    data = read_json_file(file_path=file_path)
+    user_id = message.from_user.id
+    summary = get_user_data(user_id , file_path)
+    user_name  = Adamarid[f"{user_id}"]
+    with open(file_path, 'r', encoding='utf-8') as f:
+        json_data = json.load(f)  # Преобразуем строку JSON в словарь
+
+    # Ищем пользователя по user_id
+    users = json_data.get('users', [])
+    user = next((user for user in users if user['user_id'] == str(user_id)), None)
+    
+    if user is None:
+        return "Пользователь не найден."
+    
+    # Формируем итоговое сообщение
+    summary = (
+        f"📋 <b>{user_name}:</b>\n\n"
+        f"📅 Дата планерки: <b>{user.get('date', '-')}</b>\n\n"
+        f"⏰ Время прихода: <b>{user.get('arrival_time', '-')}</b>\n\n"
+        f"🔴 Задачи: <b>{user.get('tasks', '-')}</b>\n\n"
+        f"🟠 Итоги, Что выполнено/Что не выполнено✅❌: <b>{user.get('result', '-')}</b>\n\n"
+        f"⚠️ Проблемы: <b>{user.get('problems', '-')}</b>\n\n"
+        f"💬 Комментарии: <b>{user.get('comments', '-')}</b>"
+    )
+    ##################################################################################################
+    update_or_create_google_sheet(sheet=sheet, user_name=user_name,data=user) # Сама отправка , самая главная функция 
+    # chatidof = -1002130834445
+    # -1002130834445_4
+    await message.answer(summary,parse_mode="HTML")
+    await bot.send_message(chat_id=group,text=summary,parse_mode="HTML",message_thread_id=4)
+
+
+
+
+
+
+
+
+
 
 
 
@@ -439,11 +565,11 @@ async def main() -> None:
     scheduler = AsyncIOScheduler(timezone=pytz.timezone("Asia/Bishkek"))
     
     # Добавляем задачу на 18:58 с понедельника по пятницу
-    trigger_1 = CronTrigger(hour=6, minute=30, day_of_week="0-4", timezone="Asia/Bishkek")
+    trigger_1 = CronTrigger(hour=10, minute=0, day_of_week="0-4", timezone="Asia/Bishkek")
     scheduler.add_job(send_morning_cron, trigger_1)
     
     # Добавляем задачу на 20:04 с понедельника по пятницу
-    trigger_2 = CronTrigger(hour=17, minute=0, day_of_week="0-4", timezone="Asia/Bishkek")
+    trigger_2 = CronTrigger(hour=18, minute=0, day_of_week="0-4", timezone="Asia/Bishkek")
     scheduler.add_job(send_evening_cron, trigger_2)
     # Запускаем планировщик в фоновом режиме
     scheduler.start()
@@ -461,3 +587,5 @@ if __name__ == "__main__":
     filemode='a'  # 'a' - добавлять новые логи в файл, 'w' - перезаписывать файл каждый раз
 )
     asyncio.run(main()) 
+
+# Комментарии , нужно поменять обратно токен и в .env файлике и в самом начале кода где идет конфигурация ,     
