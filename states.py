@@ -18,18 +18,38 @@ class Problem(StatesGroup):
     problemtext = State() # Проблема которую отправляем в базу 
 class Suggest(StatesGroup):
     suggesttext = State() # Предложение которую отправляем в базу 
+###################################################################
+
+class Date(StatesGroup):
+    date = State()
+class Time(StatesGroup):
+    time = State()
+class Tasks(StatesGroup):
+    tasks = State()
+class Result(StatesGroup):
+    result = State()
+class Problems(StatesGroup):
+    problem = State()
+class Comments(StatesGroup):
+    comment = State()
 
 
-# Вопрсоы , на каждом этапе получения информации 
+
+
+
+
+
+# Вопрсоы , на каждом этапе получения информации
 QUESTIONS = {
-    "dateofplanerka" : "Напишите дату",
-    "arrival_time": "Во сколько вы пришли?",
-    "urgent_tasks": "Срочные задачи",
-    "important_tasks": "Важные задачи",
-    "additional_tasks": "Не срочные задачи",
-    "result" : "Итоги дня",
-    "problems": "Возникли ли у вас проблемы? Если да, опишите их.",
-    "comments": "Есть ли комментарии или заметки?",
-    "confirm" : "Точно отправлять вашу планерку ? "
+    "dateofplanerka": "Напишите дату",  # Бот спрашивает дату самой планерки
+    "arrival_time": "Во сколько вы пришли?",  # Время когда сотрудник пришел
+    "alltasks": "Распишите все задачи",  # Задачи
+    "urgent_tasks": "Срочные задачи",  # Срочные задачи
+    "important_tasks": "Важные задачи",  # Важные задачи
+    "additional_tasks": "Не срочные задачи",  # Не срочные задачи
+    "result": "Итоги дня",  # Итоги дня
+    "problems": "Возникли ли у вас проблемы? Если да, опишите их.",  # Проблемы возникли или нет
+    "comments": "Есть ли комментарии или заметки?",  # Комментарии или заметки
+    "confirm": "Точно отправлять вашу планерку?"  # Подтверждение отправки
 }
-    
+
