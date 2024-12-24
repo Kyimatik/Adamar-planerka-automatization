@@ -1,16 +1,6 @@
 from aiogram.types import ReplyKeyboardMarkup , InlineKeyboardMarkup , InlineKeyboardButton , KeyboardButton , ReplyKeyboardRemove
 
-
-quskb = ReplyKeyboardMarkup(
-    keyboard=[
-        [
-            KeyboardButton(text="Да"),
-            KeyboardButton(text="Начать все заново")
-        ]
-    ],
-    resize_keyboard=True
-)
-
+# Кнопка отмены
 cancel = ReplyKeyboardMarkup(
     keyboard=[
         [
@@ -21,22 +11,28 @@ cancel = ReplyKeyboardMarkup(
 )
 
 
-change = ReplyKeyboardMarkup(
+
+# Самая главная клавиатура 
+mainkb = ReplyKeyboardMarkup(
     keyboard=[
         [
-            KeyboardButton(text="Дата Планерки")
+            KeyboardButton(text="Моя планерка 🧾")
         ],
         [
-            KeyboardButton(text="Время прихода"),
-            KeyboardButton(text="Срочные задачи")
+            KeyboardButton(text="Дата 📅"),
+            KeyboardButton(text="Время прихода 🕰"),
         ],
         [
-            KeyboardButton(text="Важные задачи"),
-            KeyboardButton(text="Дополнительные задачи")
+            KeyboardButton(text="Задачи 📝"),
+            KeyboardButton(text="Итоги 🎯"),
         ],
         [
-            KeyboardButton(text="Проблемы"),
-            KeyboardButton(text="Комментарии")
+            KeyboardButton(text="Проблемы 👹"),
+            KeyboardButton(text="Комментарии 🗣"),
+        ],
+        [
+            KeyboardButton(text="Очистить планерку 🧹"),
+            KeyboardButton(text="Отправить 📤"),
         ]
     ],
     resize_keyboard=True
